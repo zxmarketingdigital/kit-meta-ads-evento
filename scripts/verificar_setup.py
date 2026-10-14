@@ -45,9 +45,10 @@ def main() -> int:
         ok = estado == 1
         linha(ok, f"Conta de anúncios {c.get('name')} — {ESTADOS_CONTA.get(estado, estado)} · "
                   f"moeda {c.get('currency')} · fuso {c.get('timezone_name')}")
-        if c.get("currency") != "EUR":
-            linha(None, "A moeda da conta não é EUR: os valores do JSON são lidos na moeda da conta.")
         falhas += 0 if ok else 1
+        if c.get("currency") != "EUR":
+            linha(False, f"A conta está em {c.get('currency')}: este kit trabalha em euros. Usa uma conta em EUR.")
+            falhas += 1
     except meta.MetaErro as e:
         linha(False, f"Sem acesso à conta {cfg['META_AD_ACCOUNT_ID']}: {e}")
         falhas += 1

@@ -10,7 +10,7 @@ Uso (sempre com o ficheiro de IDs):
   python scripts/ajustar.py resultados/evento-31-10.ids.json --ativar-campanha --sim
 
 Travas (vêm da skill de estratégia):
-- Orçamento sobe no máximo 30% de uma vez, e só uma subida por dia (passar disso exige --forcar).
+- Orçamento e lance sobem no máximo 30% de uma vez; orçamento só uma subida por dia (passar disso exige --forcar).
 - Não pausa um anúncio se ficarem menos de 3 ativos (passar disso exige --forcar).
 - Cada alteração fica registada em resultados/ajustes.log.
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -43,6 +44,19 @@ def subiu_hoje() -> bool:
     return any(l.startswith(hoje) and "ORCAMENTO_SUBIU" in l for l in LOG.read_text(encoding="utf-8").splitlines())
 
 
+def texto_nao_vazio(v: str) -> str:
+    if not v or not v.strip():
+        raise argparse.ArgumentTypeError("não pode ser vazio")
+    return v.strip()
+
+
+def subida_ok(atual: float, novo: float, o_que: str, forcar: bool):
+    if novo > atual and not forcar and novo > atual * (1 + SUBIDA_MAX) + 0.005:
+        meta.falhar(f"{o_que}: subir de {atual:.2f} € para {novo:.2f} € é +{(novo / atual - 1) * 100:.0f}%. "
+                    f"Máximo {SUBIDA_MAX * 100:.0f}% de uma vez ({atual * (1 + SUBIDA_MAX):.2f} €) — "
+                    "subir mais do que isso reinicia a aprendizagem. Usa --forcar se for decisão consciente.")
+
+
 def anuncio_id(est: dict, nome: str) -> str:
     if nome in est["anuncios"]:
         return est["anuncios"][nome]["anuncio_id"]
@@ -59,9 +73,9 @@ def main() -> int:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--orcamento", type=float, help="novo orçamento diário em €")
     g.add_argument("--lance", type=float, help="novo lance em € (só com estratégia de lance com limite)")
-    g.add_argument("--pausar-anuncio")
-    g.add_argument("--ativar-anuncio")
-    g.add_argument("--inicio", help="novo início do conjunto, ISO com fuso")
+    g.add_argument("--pausar-anuncio", type=texto_nao_vazio)
+    g.add_argument("--ativar-anuncio", type=texto_nao_vazio)
+    g.add_argument("--inicio", type=texto_nao_vazio, help="novo início do conjunto, ISO com fuso")
     g.add_argument("--pausar-campanha", action="store_true")
     g.add_argument("--ativar-campanha", action="store_true")
     ap.add_argument("--sim", action="store_true", help="executa de verdade")
@@ -72,65 +86,88 @@ def main() -> int:
     caminho = caminho if caminho.is_absolute() else RAIZ / caminho
     est = json.loads(caminho.read_text(encoding="utf-8"))
     cfg = meta.carregar_config()
+    meta.exigir_eur(cfg)
     alvo, dados, rotulo = None, {}, ""
 
     if args.orcamento is not None:
         camp = meta.get(est["campanha_id"], {"fields": "daily_budget"}, cfg)
+        if not camp.get("daily_budget"):
+            meta.falhar("esta campanha não tem orçamento diário ao nível da campanha.")
         atual = int(camp["daily_budget"]) / 100
         novo = round(args.orcamento, 2)
-        if novo <= 0:
+        if not math.isfinite(novo) or novo <= 0:
             meta.falhar("o orçamento tem de ser > 0")
+        subida_ok(atual, novo, "orçamento", args.forcar)
         if novo > atual and not args.forcar:
-            if novo > atual * (1 + SUBIDA_MAX) + 0.005:
-                meta.falhar(f"subida de {atual:.2f} € para {novo:.2f} € é +{(novo / atual - 1) * 100:.0f}%. "
-                            f"Máximo {SUBIDA_MAX * 100:.0f}% de uma vez ({atual * (1 + SUBIDA_MAX):.2f} €) — "
-                            "subir mais do que isso reinicia a aprendizagem. Usa --forcar se for decisão consciente.")
             if subiu_hoje():
                 meta.falhar("o orçamento já subiu hoje. Espera pelo dia seguinte (ou --forcar).")
         alvo, dados = est["campanha_id"], {"daily_budget": meta.euros_para_centimos(novo)}
         rotulo = f"{'ORCAMENTO_SUBIU' if novo > atual else 'ORCAMENTO_DESCEU'} {atual:.2f} -> {novo:.2f}"
     elif args.lance is not None:
-        if args.lance <= 0:
+        if not math.isfinite(args.lance) or args.lance <= 0:
             meta.falhar("o lance tem de ser > 0")
         camp = meta.get(est["campanha_id"], {"fields": "bid_strategy"}, cfg)
         if camp.get("bid_strategy") == "LOWEST_COST_WITHOUT_CAP":
             meta.falhar("a campanha está sem limite de lance: não há lance para mudar.")
+        conj = meta.get(est["conjunto_id"], {"fields": "bid_amount"}, cfg)
+        if conj.get("bid_amount"):
+            subida_ok(int(conj["bid_amount"]) / 100, round(args.lance, 2), "lance", args.forcar)
         alvo, dados = est["conjunto_id"], {"bid_amount": meta.euros_para_centimos(args.lance)}
         rotulo = f"LANCE -> {args.lance:.2f}"
-    elif args.pausar_anuncio or args.ativar_anuncio:
-        nome = args.pausar_anuncio or args.ativar_anuncio
+    elif args.pausar_anuncio is not None or args.ativar_anuncio is not None:
+        pausar = args.pausar_anuncio is not None
+        nome = args.pausar_anuncio if pausar else args.ativar_anuncio
         alvo = anuncio_id(est, nome)
-        if args.pausar_anuncio and not args.forcar:
+        if pausar and not args.forcar:
             ativos = 0
             for reg in est["anuncios"].values():
-                st = meta.get(reg["anuncio_id"], {"fields": "status"}, cfg).get("status")
-                ativos += st == "ACTIVE" and reg["anuncio_id"] != alvo
+                if not reg.get("anuncio_id") or reg["anuncio_id"] == alvo:
+                    continue
+                st = meta.get(reg["anuncio_id"], {"fields": "status,effective_status"}, cfg)
+                # Reprovado continua com status ACTIVE mas não entrega: conta só quem está mesmo a correr.
+                ativos += st.get("status") == "ACTIVE" and st.get("effective_status") not in (
+                    "DISAPPROVED", "WITH_ISSUES", "PAUSED", "ADSET_PAUSED", "CAMPAIGN_PAUSED")
             if ativos < 3:
                 meta.falhar(f"pausar deixa {ativos} anúncio(s) ativo(s). O mínimo é 3: sobe um criativo novo "
                             "antes (ou --forcar).")
-        dados = {"status": "PAUSED" if args.pausar_anuncio else "ACTIVE"}
+        dados = {"status": "PAUSED" if pausar else "ACTIVE"}
         rotulo = f"ANUNCIO {dados['status']} {nome}"
-    elif args.inicio:
+    elif args.inicio is not None:
         quando = dt.datetime.fromisoformat(args.inicio)
         if quando.tzinfo is None or quando <= dt.datetime.now(dt.timezone.utc):
             meta.falhar("o início tem de ter fuso e estar no futuro")
         alvo, dados, rotulo = est["conjunto_id"], {"start_time": args.inicio}, f"INICIO -> {args.inicio}"
-    else:
+    elif args.pausar_campanha or args.ativar_campanha:
         # Pausar/ativar o conjunto sozinho deixa a campanha num estado confuso: mexe nos dois.
         st = "PAUSED" if args.pausar_campanha else "ACTIVE"
         if not args.sim:
             print(f"SIMULAÇÃO: campanha e conjunto → {st}. Repete com --sim para executar.")
             return 0
-        meta.post(est["conjunto_id"], {"status": st}, cfg)
-        meta.post(est["campanha_id"], {"status": st}, cfg)
-        registar(f"CAMPANHA {st}")
-        print(f"✅ campanha e conjunto → {st}")
+        # Pausar: campanha primeiro (corta o gasto de imediato). Ativar: conjunto primeiro.
+        ordem = [("campanha", est["campanha_id"]), ("conjunto", est["conjunto_id"])]
+        if st == "ACTIVE":
+            ordem.reverse()
+        for rot, oid in ordem:
+            try:
+                meta.post(oid, {"status": st}, cfg)
+            except meta.MetaErro as e:
+                registar(f"FALHA {rot} -> {st}: {e}")
+                meta.falhar(f"{rot} não mudou para {st}: {e}\nOs passos anteriores já foram aplicados — "
+                            "corre o mesmo comando de novo.")
+            registar(f"{rot.upper()} {st}")
+            print(f"✅ {rot} → {st}")
         return 0
+    else:
+        meta.falhar("nenhuma ação reconhecida")
 
     if not args.sim:
         print(f"SIMULAÇÃO: {rotulo} (objeto {alvo}). Repete com --sim para executar.")
         return 0
-    meta.post(alvo, dados, cfg)
+    try:
+        meta.post(alvo, dados, cfg)
+    except meta.MetaErro as e:
+        registar(f"FALHA {rotulo}: {e}")
+        meta.falhar(f"a Meta recusou: {e}")
     registar(rotulo)
     print(f"✅ {rotulo}")
     return 0

@@ -6,6 +6,7 @@ expõe get/post/upload com retry em erro transitório. Nunca imprime o token.
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import os
 import random
@@ -16,6 +17,13 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
+
+# Consola do Windows (cp1252) não imprime emoji: substitui em vez de rebentar a meio de uma criação.
+for _f in (sys.stdout, sys.stderr):
+    try:
+        _f.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 CONFIG_PATH = Path(os.environ.get("META_ADS_CONFIG", Path.home() / ".meta-ads" / "config.env"))
 API_VERSION = os.environ.get("META_API_VERSION", "v21.0")
@@ -48,7 +56,12 @@ class MetaErro(Exception):
 def carregar_config(obrigatorios=CAMPOS_CONFIG) -> dict:
     cfg: dict[str, str] = {}
     if CONFIG_PATH.exists():
-        for linha in CONFIG_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            texto = CONFIG_PATH.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            raise SystemExit(f"{CONFIG_PATH} não está em UTF-8. Grava-o de novo como UTF-8 (ex.: no Bloco de Notas, "
+                             "Guardar como → Codificação UTF-8).")
+        for linha in texto.splitlines():
             linha = linha.strip()
             if not linha or linha.startswith("#") or "=" not in linha:
                 continue
@@ -150,8 +163,10 @@ def get_todos(caminho: str, params: dict | None = None, cfg: dict | None = None,
         itens.extend(r.get("data", []))
         nxt = r.get("paging", {}).get("next")
         after = r.get("paging", {}).get("cursors", {}).get("after")
-        if not nxt or not after or len(itens) >= limite:
+        if not nxt or not after:
             return itens
+        if len(itens) >= limite:
+            raise MetaErro(f"{caminho}: mais de {limite} resultados — lista incompleta, a operação foi interrompida.")
         p["after"] = after
 
 
@@ -192,8 +207,19 @@ def upload(caminho: str, arquivo: Path, campo: str, extra: dict | None = None, c
     return r
 
 
-def euros_para_centimos(valor: float) -> int:
-    return int(round(float(valor) * 100))
+def exigir_eur(cfg: dict) -> None:
+    """Todos os valores do kit estão em euros: conta noutra moeda gastaria noutra unidade."""
+    moeda = get(cfg["META_AD_ACCOUNT_ID"], {"fields": "currency"}, cfg).get("currency")
+    if moeda != "EUR":
+        falhar(f"a conta de anúncios está em {moeda}, não em EUR. Os valores deste kit são euros: "
+               "usa uma conta em EUR (a moeda de uma conta não se muda depois de criada).")
+
+
+def euros_para_centimos(valor) -> int:
+    v = float(valor)
+    if not math.isfinite(v) or v <= 0:
+        raise ValueError(f"valor em euros inválido: {valor!r}")
+    return int(round(v * 100))
 
 
 def falhar(msg: str, codigo: int = 1):

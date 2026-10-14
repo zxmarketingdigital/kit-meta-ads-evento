@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -50,7 +51,8 @@ def tem_a_definir(valor) -> bool:
 def validar(plano: dict) -> list[str]:
     erros: list[str] = []
     c, p, ads = plano.get("campanha", {}), plano.get("publico", {}), plano.get("anuncios", [])
-    for chave, bloco in (("campanha", c), ("publico", p), ("anuncios", ads)):
+    ev = plano.get("evento", {})
+    for chave, bloco in (("evento", ev), ("campanha", c), ("publico", p), ("anuncios", ads)):
         if tem_a_definir(bloco):
             erros.append(f"'{chave}' ainda tem campos A_DEFINIR")
     if c.get("evento_otimizacao") not in OBJETIVO:
@@ -59,19 +61,34 @@ def validar(plano: dict) -> list[str]:
         erros.append(f"estrategia_lance tem de ser um de {sorted(LANCES)}")
     if c.get("estrategia_lance") != "LOWEST_COST_WITHOUT_CAP" and not c.get("lance_eur"):
         erros.append("estrategia com limite exige lance_eur")
+    if not str(ev.get("landing_page", "")).startswith("https://"):
+        erros.append("evento.landing_page tem de ser um endereço https://")
     if not tem_a_definir(c):
-        try:
-            if float(c["orcamento_diario_eur"]) <= 0:
-                erros.append("orcamento_diario_eur tem de ser > 0")
-        except (TypeError, ValueError, KeyError):
-            erros.append("orcamento_diario_eur inválido")
+        for campo in ("orcamento_diario_eur",) + (("lance_eur",) if c.get("lance_eur") is not None else ()):
+            try:
+                v = float(c[campo])
+                if not math.isfinite(v) or v <= 0:
+                    erros.append(f"{campo} tem de ser um número > 0")
+            except (TypeError, ValueError, KeyError):
+                erros.append(f"{campo} inválido")
+        datas = {}
         for campo in ("inicio", "fim"):
             try:
-                quando = dt.datetime.fromisoformat(str(c[campo]))
-                if quando.tzinfo is None:
+                datas[campo] = dt.datetime.fromisoformat(str(c[campo]))
+                if datas[campo].tzinfo is None:
                     erros.append(f"{campo} precisa do fuso (ex.: +01:00)")
+                    datas.pop(campo)
             except (ValueError, KeyError):
                 erros.append(f"{campo} não é data ISO válida")
+        if len(datas) == 2 and datas["fim"] <= datas["inicio"]:
+            erros.append("fim tem de ser depois do início")
+    if not tem_a_definir(p):
+        for campo in ("latitude", "longitude", "raio_km", "idade_min", "idade_max"):
+            try:
+                if not math.isfinite(float(p[campo])):
+                    raise ValueError
+            except (TypeError, ValueError, KeyError):
+                erros.append(f"publico.{campo} inválido")
     if len(ads) < 3:
         erros.append(f"são precisos pelo menos 3 anúncios (há {len(ads)})")
     nomes = [a.get("nome") for a in ads]
@@ -125,8 +142,8 @@ def gravar_estado(caminho: Path, estado: dict):
 def existe_por_nome(cfg: dict, edge: str, nome: str, filtro_pai: tuple[str, str] | None = None) -> str | None:
     """Procura objeto já criado com o mesmo nome (evita duplicar depois de uma falha a meio)."""
     filtros = [{"field": "name", "operator": "EQUAL", "value": nome}]
-    itens = meta.get_todos(f"{cfg['META_AD_ACCOUNT_ID']}/{edge}", {
-        "fields": "id,name,campaign_id,adset_id", "filtering": filtros}, cfg)
+    campos = {"campaigns": "id,name", "adsets": "id,name,campaign_id", "ads": "id,name,campaign_id,adset_id"}[edge]
+    itens = meta.get_todos(f"{cfg['META_AD_ACCOUNT_ID']}/{edge}", {"fields": campos, "filtering": filtros}, cfg)
     for it in itens:
         if it.get("name") != nome:
             continue
@@ -134,6 +151,35 @@ def existe_por_nome(cfg: dict, edge: str, nome: str, filtro_pai: tuple[str, str]
             continue
         return it["id"]
     return None
+
+
+def _instante(valor: str) -> dt.datetime:
+    v = str(valor)
+    if len(v) > 5 and v[-5] in "+-" and v[-3] != ":":
+        v = v[:-2] + ":" + v[-2:]  # a Meta devolve +0100; fromisoformat antigo quer +01:00
+    return dt.datetime.fromisoformat(v)
+
+
+def conferir_existente(cfg: dict, est: dict, c: dict):
+    """Ao reaproveitar campanha/conjunto já criados, recusar se o plano mudou (senão o plano novo não é aplicado)."""
+    dif = []
+    camp = meta.get(est["campanha_id"], {"fields": "daily_budget,bid_strategy"}, cfg)
+    if int(camp.get("daily_budget") or 0) != meta.euros_para_centimos(c["orcamento_diario_eur"]):
+        dif.append(f"orçamento na Meta {int(camp.get('daily_budget') or 0) / 100:.2f} € ≠ plano {c['orcamento_diario_eur']} €")
+    if camp.get("bid_strategy") != c["estrategia_lance"]:
+        dif.append(f"lance na Meta {camp.get('bid_strategy')} ≠ plano {c['estrategia_lance']}")
+    if est.get("conjunto_id"):
+        conj = meta.get(est["conjunto_id"], {"fields": "start_time,end_time,bid_amount"}, cfg)
+        for campo, chave in (("start_time", "inicio"), ("end_time", "fim")):
+            if conj.get(campo) and _instante(conj[campo]) != dt.datetime.fromisoformat(c[chave]):
+                dif.append(f"{chave} na Meta {conj[campo]} ≠ plano {c[chave]}")
+        if c["estrategia_lance"] != "LOWEST_COST_WITHOUT_CAP" and \
+                int(conj.get("bid_amount") or 0) != meta.euros_para_centimos(c["lance_eur"]):
+            dif.append(f"lance na Meta {int(conj.get('bid_amount') or 0) / 100:.2f} € ≠ plano {c['lance_eur']} €")
+    if dif:
+        meta.falhar("a campanha já existe e está diferente do plano:\n   - " + "\n   - ".join(dif) +
+                    "\nPara mudar o que já existe usa scripts/ajustar.py (orçamento, lance, início). "
+                    "Para começar de novo, muda o nome da campanha no plano.")
 
 
 def esperar_video(cfg: dict, video_id: str) -> str:
@@ -160,6 +206,7 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
     est = carregar_estado(estado_path)
     act = cfg["META_AD_ACCOUNT_ID"]
     link = e["landing_page"]
+    meta.exigir_eur(cfg)
 
     inicio = dt.datetime.fromisoformat(c["inicio"])
     if inicio <= dt.datetime.now(dt.timezone.utc):
@@ -178,6 +225,7 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
             "bid_strategy": c["estrategia_lance"],
         }, cfg)
         est["campanha_id"] = r["id"]
+        gravar_estado(estado_path, est)
         print(f"✅ campanha criada: {r['id']}")
     else:
         print(f"↩️  campanha já existe: {est['campanha_id']}")
@@ -212,10 +260,12 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
             dados["bid_amount"] = meta.euros_para_centimos(c["lance_eur"])
         r = meta.post(f"{act}/adsets", dados, cfg)
         est["conjunto_id"] = r["id"]
+        gravar_estado(estado_path, est)
         print(f"✅ conjunto criado: {r['id']}")
     else:
         print(f"↩️  conjunto já existe: {est['conjunto_id']}")
     gravar_estado(estado_path, est)
+    conferir_existente(cfg, est, c)
 
     for a in plano["anuncios"]:
         reg = est["anuncios"].setdefault(a["nome"], {})
@@ -271,17 +321,29 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
 
 def ativar(plano: dict, cfg: dict, estado_path: Path):
     est = carregar_estado(estado_path)
-    if not est.get("campanha_id") or len(est.get("anuncios", {})) < 3:
-        meta.falhar("nada criado ainda (ou menos de 3 anúncios). Corre primeiro com --criar.")
-    conj = meta.get(est["conjunto_id"], {"fields": "start_time"}, cfg)
-    inicio = dt.datetime.fromisoformat(conj["start_time"].replace("+0000", "+00:00"))
-    if inicio <= dt.datetime.now(dt.timezone.utc):
+    c = plano["campanha"]
+    erros = validar(plano)
+    if erros:
+        meta.falhar("o plano tem erros, não ativo:\n   - " + "\n   - ".join(erros))
+    if not est.get("campanha_id") or not est.get("conjunto_id"):
+        meta.falhar("nada criado ainda. Corre primeiro com --criar.")
+    faltam = [a["nome"] for a in plano["anuncios"] if not est["anuncios"].get(a["nome"], {}).get("anuncio_id")]
+    if faltam:
+        meta.falhar(f"anúncios do plano ainda não criados: {faltam}. Corre --criar de novo antes de ativar.")
+    meta.exigir_eur(cfg)
+    conferir_existente(cfg, est, c)
+    fora = [n for n in est["anuncios"] if n not in {a["nome"] for a in plano["anuncios"]}]
+    conj = meta.get(est["conjunto_id"], {"fields": "start_time,end_time"}, cfg)
+    if _instante(conj["start_time"]) <= dt.datetime.now(dt.timezone.utc):
         meta.falhar(f"o início do conjunto ({conj['start_time']}) já passou. Ligar agora começa a meio do dia "
                     "e gasta o orçamento em poucas horas. Muda o início para a próxima meia-noite "
-                    "(python scripts/ajustar.py ... --inicio) e ativa de novo.")
-    for nome, reg in est["anuncios"].items():
-        meta.post(reg["anuncio_id"], {"status": "ACTIVE"}, cfg)
-        print(f"✅ anúncio ativo: {nome}")
+                    "(python scripts/ajustar.py <ids> --inicio <data> --sim) e ativa de novo.")
+    print(f"A ATIVAR: {c['nome']} · {c['orcamento_diario_eur']} €/dia · {conj['start_time']} → {conj.get('end_time')}")
+    for a in plano["anuncios"]:
+        meta.post(est["anuncios"][a["nome"]]["anuncio_id"], {"status": "ACTIVE"}, cfg)
+        print(f"✅ anúncio ativo: {a['nome']}")
+    if fora:
+        print(f"⚠️  ficam como estão (não estão no plano): {fora}")
     meta.post(est["conjunto_id"], {"status": "ACTIVE"}, cfg)
     meta.post(est["campanha_id"], {"status": "ACTIVE"}, cfg)
     print(f"✅ campanha e conjunto ativos — entregam a partir de {conj['start_time']}")
@@ -305,7 +367,10 @@ def main() -> int:
     if args.ativar:
         if not args.sim:
             meta.falhar("--ativar liga a campanha e começa a gastar. Repete com --sim para confirmar.")
-        ativar(plano, cfg, estado_path)
+        try:
+            ativar(plano, cfg, estado_path)
+        except meta.MetaErro as e:
+            meta.falhar(f"a Meta recusou: {e}\nConfere o estado com scripts/verificar_campanha.py antes de repetir.")
         return 0
 
     erros = validar(plano)
