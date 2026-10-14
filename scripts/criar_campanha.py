@@ -309,6 +309,9 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
             continue
         f = RAIZ / a["ficheiro"]
         cta = {"type": a.get("cta", "LEARN_MORE"), "value": {"link": link}}
+        if not reg.get("criativo_id") and existe_por_nome(cfg, "ads", a["nome"], ("adset_id", est["conjunto_id"])):
+            meta.falhar(f"já existe um anúncio '{a['nome']}' neste conjunto que não está em {estado_path.name} — "
+                        "não sei se tem o conteúdo do plano. Dá-lhe um nome novo no plano (e pausa o antigo).")
 
         if not reg.get("criativo_id"):
             dig_f = hashlib.sha256(f.read_bytes()).hexdigest()
