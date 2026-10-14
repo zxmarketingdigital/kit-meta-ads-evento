@@ -1,0 +1,56 @@
+{
+  "_leia": "Campos com A_DEFINIR têm de ser preenchidos antes de criar. O criar_campanha.py recusa enquanto houver algum.",
+  "evento": {
+    "nome": "Workshop Prático de Vendas com IA",
+    "data": "2026-10-31",
+    "horario": "08:00–12:00 (hora de Lisboa)",
+    "cidade": "Lisboa",
+    "lugares": 100,
+    "preco": "10 € até 15/10 às 23:59, depois 20 €",
+    "landing_page": "https://eventos.be-pro.pt/ia-contactos/",
+    "meta_inscricoes": 100,
+    "publico": ["consultores imobiliários", "gestores de crédito", "network marketing"]
+  },
+  "campanha": {
+    "nome": "WORKSHOP-IA-31OUT | LEAD | LISBOA",
+    "evento_otimizacao": "LEAD",
+    "orcamento_diario_eur": "A_DEFINIR",
+    "estrategia_lance": "LOWEST_COST_WITHOUT_CAP",
+    "lance_eur": null,
+    "inicio": "A_DEFINIR (ex.: 2026-10-16T00:00:00+01:00 — meia-noite de Lisboa, sempre no futuro)",
+    "fim": "2026-10-31T00:00:00+00:00"
+  },
+  "publico": {
+    "latitude": 38.7223,
+    "longitude": -9.1393,
+    "raio_km": "A_DEFINIR",
+    "idade_min": 18,
+    "idade_max": 65
+  },
+  "anuncios": [
+    {
+      "nome": "AD01 - A_DEFINIR",
+      "ficheiro": "criativos/A_DEFINIR.png",
+      "texto": "A_DEFINIR",
+      "titulo": "A_DEFINIR",
+      "descricao": "",
+      "cta": "LEARN_MORE"
+    },
+    {
+      "nome": "AD02 - A_DEFINIR",
+      "ficheiro": "criativos/A_DEFINIR.png",
+      "texto": "A_DEFINIR",
+      "titulo": "A_DEFINIR",
+      "descricao": "",
+      "cta": "LEARN_MORE"
+    },
+    {
+      "nome": "AD03 - A_DEFINIR",
+      "ficheiro": "criativos/A_DEFINIR.mp4",
+      "texto": "A_DEFINIR",
+      "titulo": "A_DEFINIR",
+      "descricao": "",
+      "cta": "LEARN_MORE"
+    }
+  ]
+}

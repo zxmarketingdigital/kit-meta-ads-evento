@@ -1,0 +1,9 @@
+*.env
+!config/config.exemplo.env
+resultados/*
+!resultados/.gitkeep
+criativos/*
+!criativos/.gitkeep
+__pycache__/
+*.pyc
+.DS_Store
