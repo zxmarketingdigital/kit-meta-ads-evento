@@ -174,7 +174,7 @@ def conteudo_anuncio(a: dict, link: str) -> str:
 
 
 def conferir_anuncio(reg: dict, a: dict, link: str):
-    if reg.get("anuncio_id") and not reg.get("conteudo"):
+    if (reg.get("anuncio_id") or reg.get("criativo_id")) and not reg.get("conteudo"):
         meta.falhar(f"o anúncio '{a['nome']}' está no estado sem registo de conteúdo. Dá-lhe um nome novo no plano.")
     if reg.get("conteudo") and reg["conteudo"] != conteudo_anuncio(a, link):
         meta.falhar(f"o anúncio '{a['nome']}' já foi criado e o plano mudou (texto, título, CTA, ficheiro ou link). "
@@ -192,7 +192,9 @@ def conferir_existente(cfg: dict, est: dict, c: dict, p: dict):
     """Ao reaproveitar campanha/conjunto já criados, recusar se o plano mudou (senão o plano novo não é aplicado)."""
     conferir_nome(est, c)
     dif = []
-    camp = meta.get(est["campanha_id"], {"fields": "daily_budget,bid_strategy,objective"}, cfg)
+    camp = meta.get(est["campanha_id"], {"fields": "name,daily_budget,bid_strategy,objective"}, cfg)
+    if camp.get("name") != c["nome"]:
+        dif.append(f"nome na Meta '{camp.get('name')}' ≠ plano '{c['nome']}'")
     if camp.get("objective") != OBJETIVO[c["evento_otimizacao"]]:
         dif.append(f"objetivo na Meta {camp.get('objective')} ≠ plano {OBJETIVO[c['evento_otimizacao']]}")
     if int(camp.get("daily_budget") or 0) != meta.euros_para_centimos(c["orcamento_diario_eur"]):
