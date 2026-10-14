@@ -62,6 +62,8 @@ def validar(plano: dict) -> list[str]:
         erros.append(f"estrategia_lance tem de ser um de {sorted(LANCES)}")
     if c.get("estrategia_lance") != "LOWEST_COST_WITHOUT_CAP" and not c.get("lance_eur"):
         erros.append("estrategia com limite exige lance_eur")
+    if c.get("estrategia_lance") == "LOWEST_COST_WITHOUT_CAP" and c.get("lance_eur") is not None:
+        erros.append("LOWEST_COST_WITHOUT_CAP não usa lance: põe lance_eur a null")
     if not str(ev.get("landing_page", "")).startswith("https://"):
         erros.append("evento.landing_page tem de ser um endereço https://")
     if not tem_a_definir(c):
@@ -172,14 +174,23 @@ def conteudo_anuncio(a: dict, link: str) -> str:
 
 
 def conferir_anuncio(reg: dict, a: dict, link: str):
+    if reg.get("anuncio_id") and not reg.get("conteudo"):
+        meta.falhar(f"o anúncio '{a['nome']}' está no estado sem registo de conteúdo. Dá-lhe um nome novo no plano.")
     if reg.get("conteudo") and reg["conteudo"] != conteudo_anuncio(a, link):
         meta.falhar(f"o anúncio '{a['nome']}' já foi criado e o plano mudou (texto, título, CTA, ficheiro ou link). "
                     "Editar um anúncio já criado não é aplicado. Dá-lhe um nome novo no plano para criar um anúncio "
                     "novo, e pausa o antigo com scripts/ajustar.py.")
 
 
+def conferir_nome(est: dict, c: dict):
+    if est.get("nome_campanha") and est["nome_campanha"] != c["nome"]:
+        meta.falhar(f"este plano já criou a campanha '{est['nome_campanha']}' e agora diz '{c['nome']}'. Renomear não "
+                    "cria campanha nova: copia o plano para um ficheiro novo (ex.: campanha/evento-31-10-v2.json).")
+
+
 def conferir_existente(cfg: dict, est: dict, c: dict, p: dict):
     """Ao reaproveitar campanha/conjunto já criados, recusar se o plano mudou (senão o plano novo não é aplicado)."""
+    conferir_nome(est, c)
     dif = []
     camp = meta.get(est["campanha_id"], {"fields": "daily_budget,bid_strategy,objective"}, cfg)
     if camp.get("objective") != OBJETIVO[c["evento_otimizacao"]]:
@@ -213,7 +224,7 @@ def conferir_existente(cfg: dict, est: dict, c: dict, p: dict):
     if dif:
         meta.falhar("a campanha já existe e está diferente do plano:\n   - " + "\n   - ".join(dif) +
                     "\nPara mudar o que já existe usa scripts/ajustar.py (orçamento, lance, início). "
-                    "Para começar de novo, muda o nome da campanha no plano.")
+                    "Para começar de novo, copia o plano para um ficheiro novo (ex.: campanha/evento-31-10-v2.json).")
 
 
 def esperar_video(cfg: dict, video_id: str) -> str:
@@ -246,6 +257,8 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
     if inicio <= dt.datetime.now(dt.timezone.utc):
         meta.falhar(f"início {c['inicio']} já passou. Escolhe a próxima meia-noite de Lisboa.")
 
+    conferir_nome(est, c)
+    est["nome_campanha"] = c["nome"]
     if not est.get("campanha_id"):
         est["campanha_id"] = existe_por_nome(cfg, "campaigns", c["nome"])
     if not est.get("campanha_id"):
