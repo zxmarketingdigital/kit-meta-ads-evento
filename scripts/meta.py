@@ -18,10 +18,10 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-# Consola do Windows (cp1252) não imprime emoji: substitui em vez de rebentar a meio de uma criação.
+# Consola/redireção no Windows (cp1252) não imprime emoji: força UTF-8 para um print nunca interromper uma operação.
 for _f in (sys.stdout, sys.stderr):
     try:
-        _f.reconfigure(errors="replace")
+        _f.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
 
@@ -205,6 +205,17 @@ def upload(caminho: str, arquivo: Path, campo: str, extra: dict | None = None, c
     r = _abrir(req, UPLOAD_TIMEOUT, cfg["META_ACCESS_TOKEN"])
     print(f"  upload {arquivo.name} levou {time.monotonic() - t0:.0f}s (teto {UPLOAD_TIMEOUT}s)")
     return r
+
+
+def intrusos_ativos(cfg: dict, campanha_id: str, conjunto_id: str, ids_anuncios: set) -> list:
+    """Conjuntos e anúncios ACTIVE que não são do kit: ligar a campanha pô-los-ia a gastar."""
+    fora = [f"conjunto {x.get('name')} [{x['id']}]" for x in get_todos(
+        f"{campanha_id}/adsets", {"fields": "id,name,status"}, cfg)
+        if x["id"] != conjunto_id and x.get("status") == "ACTIVE"]
+    fora += [f"anúncio {x.get('name')} [{x['id']}]" for x in get_todos(
+        f"{conjunto_id}/ads", {"fields": "id,name,status"}, cfg)
+        if x["id"] not in ids_anuncios and x.get("status") == "ACTIVE"]
+    return fora
 
 
 def exigir_eur(cfg: dict) -> None:

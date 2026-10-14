@@ -111,7 +111,11 @@ def main() -> int:
             meta.falhar("a campanha está sem limite de lance: não há lance para mudar.")
         conj = meta.get(est["conjunto_id"], {"fields": "bid_amount"}, cfg)
         if conj.get("bid_amount"):
+            print(f"Lance atual: {int(conj['bid_amount']) / 100:.2f} €")
             subida_ok(int(conj["bid_amount"]) / 100, round(args.lance, 2), "lance", args.forcar)
+        elif not args.forcar:
+            meta.falhar("não consegui ler o lance atual, por isso não sei se a subida passa dos 30%. "
+                        "Confere no Gestor de Anúncios e repete com --forcar se o valor estiver certo.")
         alvo, dados = est["conjunto_id"], {"bid_amount": meta.euros_para_centimos(args.lance)}
         rotulo = f"LANCE -> {args.lance:.2f}"
     elif args.pausar_anuncio is not None or args.ativar_anuncio is not None:
@@ -143,6 +147,12 @@ def main() -> int:
         if not args.sim:
             print(f"SIMULAÇÃO: campanha e conjunto → {st}. Repete com --sim para executar.")
             return 0
+        if st == "ACTIVE" and not args.forcar:
+            ids = {r["anuncio_id"] for r in est["anuncios"].values() if r.get("anuncio_id")}
+            intrusos = meta.intrusos_ativos(cfg, est["campanha_id"], est["conjunto_id"], ids)
+            if intrusos:
+                meta.falhar(f"há objetos ativos na campanha que não são do kit: {intrusos}. Ativar pô-los-ia a gastar. "
+                            "Pausa-os no Gestor de Anúncios (ou --forcar se for de propósito).")
         # Pausar: campanha primeiro (corta o gasto de imediato). Ativar: conjunto primeiro.
         ordem = [("campanha", est["campanha_id"]), ("conjunto", est["conjunto_id"])]
         if st == "ACTIVE":

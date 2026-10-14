@@ -311,6 +311,11 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
         cta = {"type": a.get("cta", "LEARN_MORE"), "value": {"link": link}}
 
         if not reg.get("criativo_id"):
+            dig_f = hashlib.sha256(f.read_bytes()).hexdigest()
+            if reg.get("ficheiro_sha") and reg["ficheiro_sha"] != dig_f:
+                reg.pop("image_hash", None)
+                reg.pop("video_id", None)
+            reg["ficheiro_sha"] = dig_f
             if f.suffix.lower() in IMAGENS:
                 if not reg.get("image_hash"):
                     r = meta.upload(f"{act}/adimages", f, "filename", cfg=cfg)
@@ -371,11 +376,9 @@ def ativar(plano: dict, cfg: dict, estado_path: Path):
     for a in plano["anuncios"]:
         conferir_anuncio(est["anuncios"][a["nome"]], a, plano["evento"]["landing_page"])
     ids_plano = {est["anuncios"][a["nome"]]["anuncio_id"] for a in plano["anuncios"]}
-    no_conjunto = meta.get_todos(f"{est['conjunto_id']}/ads", {"fields": "id,name,status"}, cfg)
-    intrusos = [f"{x.get('name')} [{x['id']}]" for x in no_conjunto
-                if x["id"] not in ids_plano and x.get("status") == "ACTIVE"]
+    intrusos = meta.intrusos_ativos(cfg, est["campanha_id"], est["conjunto_id"], ids_plano)
     if intrusos:
-        meta.falhar(f"há anúncios ativos no conjunto que não estão no plano: {intrusos}. Ligar o conjunto pô-los-ia "
+        meta.falhar(f"há objetos ativos na campanha que não estão no plano: {intrusos}. Ligar a campanha pô-los-ia "
                     "a gastar. Pausa-os no Gestor de Anúncios (ou acrescenta-os ao plano) e ativa de novo.")
     fora = [n for n in est["anuncios"] if n not in {a["nome"] for a in plano["anuncios"]}]
     conj = meta.get(est["conjunto_id"], {"fields": "start_time,end_time"}, cfg)
