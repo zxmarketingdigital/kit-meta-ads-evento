@@ -22,7 +22,7 @@ Dentro do Claude Code escreve: **"quero criar a campanha do workshop"**. Ele con
 1. Acesso de administrador ao **Business Manager** da Meta, com a conta de anúncios, a página e o pixel.
 2. Um **token de utilizador do sistema** (passo a passo em [`docs/1-configurar-meta.md`](docs/1-configurar-meta.md)).
 3. O **pixel instalado na página de inscrição** a enviar o evento `Lead` ([`docs/2-instalar-pixel.md`](docs/2-instalar-pixel.md)).
-4. **Pelo menos 3 criativos** (imagem ou vídeo) em `criativos/` ([`docs/3-criativos.md`](docs/3-criativos.md)).
+4. **Pelo menos 3 criativos** (imagem ou vídeo) em `criativos/` ([`docs/3-criativos.md`](docs/3-criativos.md)). Modelos de arte que já venderam em [`referencias-artes/`](referencias-artes/README.md).
 
 ## Segurança
 

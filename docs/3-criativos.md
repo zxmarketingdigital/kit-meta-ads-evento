@@ -10,6 +10,10 @@
 
 **Zona segura:** nos Stories/Reels, a Meta tapa os **14% de cima** (foto e nome) e os **25% de baixo** (texto e botão). Nada importante nessas faixas.
 
+## Modelos
+
+As artes que já venderam e o catálogo de layouts em prompt estão em [`referencias-artes/`](../referencias-artes/README.md). Começa por lá.
+
 ## Quantos
 
 - **Mínimo 3 anúncios** para começar. Com menos, a Meta tem pouco por onde escolher e a campanha cansa depressa.

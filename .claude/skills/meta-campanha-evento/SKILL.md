@@ -13,7 +13,7 @@ Conduz o Bruno, em português de Portugal e tratando por "tu", desde a configura
 
 1. **Setup** — `python scripts/verificar_setup.py`. Se faltar config, guiar por `docs/1-configurar-meta.md`. O token é colado pelo Bruno no ficheiro `~/.meta-ads/config.env`; **nunca pedir o token no chat nem o escrever em ficheiro dentro do repositório**.
 2. **Pixel a disparar** — o setup tem de mostrar o evento `Lead` nos últimos 7 dias. Sem isso, parar e seguir `docs/2-instalar-pixel.md`. Campanha que otimiza para um evento que nunca disparou não aprende e queima orçamento.
-3. **Criativos** — ficheiros em `criativos/`, regras em `docs/3-criativos.md`. **Mínimo 3 anúncios.**
+3. **Criativos** — ficheiros em `criativos/`, regras em `docs/3-criativos.md`. Para fazer as artes, partir dos modelos de `referencias-artes/` (artes validadas + `formatos.json` com o passo a passo no `README.md` da pasta); nunca inventar layout nem copiar textos/preços das referências. **Mínimo 3 anúncios.**
 4. **Plano** — preencher `campanha/evento-31-10.json`. Os campos `A_DEFINIR` são decisões do Bruno: perguntar, não inventar (orçamento diário, raio, início, textos). Propor com a razão, ele decide.
 5. **Simular** — `python scripts/criar_campanha.py campanha/evento-31-10.json` mostra o plano sem criar nada. Ler com ele.
 6. **Criar PAUSADO** — `... --criar`. Tudo nasce pausado.
