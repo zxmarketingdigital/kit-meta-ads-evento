@@ -30,7 +30,14 @@ def main() -> int:
         "fields": "name,status,effective_status,objective,daily_budget,bid_strategy,issues_info"}, cfg)
     print(f"CAMPANHA {camp['name']} [{est['campanha_id']}]")
     print(f"  estado: {camp.get('status')} / efetivo {camp.get('effective_status')} · objetivo {camp.get('objective')}")
-    print(f"  orçamento diário: {int(camp.get('daily_budget', 0)) / 100:.2f} € · lance {camp.get('bid_strategy')}")
+    if camp.get("daily_budget"):
+        print(f"  orçamento diário: {int(camp['daily_budget']) / 100:.2f} € · lance {camp.get('bid_strategy')}")
+    else:
+        problemas += 1
+        print("  🔴 sem orçamento diário na campanha (este kit põe o orçamento na campanha) — confere no Gestor")
+    if camp.get("effective_status") in ("DISAPPROVED", "WITH_ISSUES"):
+        problemas += 1
+        print(f"  🔴 campanha em {camp.get('effective_status')}")
     for i in camp.get("issues_info") or []:
         problemas += 1
         print(f"  🔴 {i.get('error_message') or i}")
@@ -41,6 +48,9 @@ def main() -> int:
     print(f"\nCONJUNTO {conj['name']} [{est['conjunto_id']}]")
     print(f"  estado: {conj.get('status')} / efetivo {conj.get('effective_status')}")
     print(f"  início {conj.get('start_time')} · fim {conj.get('end_time')}")
+    if conj.get("effective_status") in ("DISAPPROVED", "WITH_ISSUES"):
+        problemas += 1
+        print(f"  🔴 conjunto em {conj.get('effective_status')}")
     print(f"  otimiza: {conj.get('optimization_goal')} → {conj.get('promoted_object')}")
     if conj.get("bid_amount"):
         print(f"  lance: {int(conj['bid_amount']) / 100:.2f} €")

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import math
 import sys
@@ -160,16 +161,49 @@ def _instante(valor: str) -> dt.datetime:
     return dt.datetime.fromisoformat(v)
 
 
-def conferir_existente(cfg: dict, est: dict, c: dict):
+def conteudo_anuncio(a: dict, link: str) -> str:
+    chaves = ("texto", "titulo", "descricao", "cta", "ficheiro")
+    base = json.dumps([a.get(k, "") for k in chaves] + [link], ensure_ascii=False)
+    f = RAIZ / a.get("ficheiro", "")
+    dig = hashlib.sha256(base.encode("utf-8"))
+    if f.is_file():
+        dig.update(f.read_bytes())
+    return dig.hexdigest()
+
+
+def conferir_anuncio(reg: dict, a: dict, link: str):
+    if reg.get("conteudo") and reg["conteudo"] != conteudo_anuncio(a, link):
+        meta.falhar(f"o anúncio '{a['nome']}' já foi criado e o plano mudou (texto, título, CTA, ficheiro ou link). "
+                    "Editar um anúncio já criado não é aplicado. Dá-lhe um nome novo no plano para criar um anúncio "
+                    "novo, e pausa o antigo com scripts/ajustar.py.")
+
+
+def conferir_existente(cfg: dict, est: dict, c: dict, p: dict):
     """Ao reaproveitar campanha/conjunto já criados, recusar se o plano mudou (senão o plano novo não é aplicado)."""
     dif = []
-    camp = meta.get(est["campanha_id"], {"fields": "daily_budget,bid_strategy"}, cfg)
+    camp = meta.get(est["campanha_id"], {"fields": "daily_budget,bid_strategy,objective"}, cfg)
+    if camp.get("objective") != OBJETIVO[c["evento_otimizacao"]]:
+        dif.append(f"objetivo na Meta {camp.get('objective')} ≠ plano {OBJETIVO[c['evento_otimizacao']]}")
     if int(camp.get("daily_budget") or 0) != meta.euros_para_centimos(c["orcamento_diario_eur"]):
         dif.append(f"orçamento na Meta {int(camp.get('daily_budget') or 0) / 100:.2f} € ≠ plano {c['orcamento_diario_eur']} €")
     if camp.get("bid_strategy") != c["estrategia_lance"]:
         dif.append(f"lance na Meta {camp.get('bid_strategy')} ≠ plano {c['estrategia_lance']}")
     if est.get("conjunto_id"):
-        conj = meta.get(est["conjunto_id"], {"fields": "start_time,end_time,bid_amount"}, cfg)
+        conj = meta.get(est["conjunto_id"], {
+            "fields": "start_time,end_time,bid_amount,targeting,promoted_object,optimization_goal"}, cfg)
+        if (conj.get("promoted_object") or {}).get("custom_event_type") != c["evento_otimizacao"]:
+            dif.append(f"evento na Meta {(conj.get('promoted_object') or {}).get('custom_event_type')} "
+                       f"≠ plano {c['evento_otimizacao']}")
+        tg = conj.get("targeting") or {}
+        locs = (tg.get("geo_locations") or {}).get("custom_locations") or []
+        loc = locs[0] if len(locs) == 1 else {}
+        geo_ok = (len(locs) == 1 and abs(float(loc.get("latitude", 999)) - float(p["latitude"])) < 1e-4
+                  and abs(float(loc.get("longitude", 999)) - float(p["longitude"])) < 1e-4
+                  and abs(float(loc.get("radius", -1)) - float(p["raio_km"])) < 1e-6)
+        if not geo_ok:
+            dif.append(f"geografia na Meta {locs} ≠ plano ({p['latitude']}, {p['longitude']}) raio {p['raio_km']} km")
+        if int(tg.get("age_min", 0)) != int(p["idade_min"]) or int(tg.get("age_max", 0)) != int(p["idade_max"]):
+            dif.append(f"idades na Meta {tg.get('age_min')}–{tg.get('age_max')} ≠ plano {p['idade_min']}–{p['idade_max']}")
         for campo, chave in (("start_time", "inicio"), ("end_time", "fim")):
             if conj.get(campo) and _instante(conj[campo]) != dt.datetime.fromisoformat(c[chave]):
                 dif.append(f"{chave} na Meta {conj[campo]} ≠ plano {c[chave]}")
@@ -265,10 +299,11 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
     else:
         print(f"↩️  conjunto já existe: {est['conjunto_id']}")
     gravar_estado(estado_path, est)
-    conferir_existente(cfg, est, c)
+    conferir_existente(cfg, est, c, p)
 
     for a in plano["anuncios"]:
         reg = est["anuncios"].setdefault(a["nome"], {})
+        conferir_anuncio(reg, a, link)
         if reg.get("anuncio_id"):
             print(f"↩️  {a['nome']} já existe: {reg['anuncio_id']}")
             continue
@@ -302,6 +337,7 @@ def criar(plano: dict, cfg: dict, estado_path: Path):
                 "degrees_of_freedom_spec": DOF,
             }, cfg)
             reg["criativo_id"] = r["id"]
+            reg["conteudo"] = conteudo_anuncio(a, link)
             gravar_estado(estado_path, est)
 
         existente = existe_por_nome(cfg, "ads", a["nome"], ("adset_id", est["conjunto_id"]))
@@ -331,7 +367,16 @@ def ativar(plano: dict, cfg: dict, estado_path: Path):
     if faltam:
         meta.falhar(f"anúncios do plano ainda não criados: {faltam}. Corre --criar de novo antes de ativar.")
     meta.exigir_eur(cfg)
-    conferir_existente(cfg, est, c)
+    conferir_existente(cfg, est, c, plano["publico"])
+    for a in plano["anuncios"]:
+        conferir_anuncio(est["anuncios"][a["nome"]], a, plano["evento"]["landing_page"])
+    ids_plano = {est["anuncios"][a["nome"]]["anuncio_id"] for a in plano["anuncios"]}
+    no_conjunto = meta.get_todos(f"{est['conjunto_id']}/ads", {"fields": "id,name,status"}, cfg)
+    intrusos = [f"{x.get('name')} [{x['id']}]" for x in no_conjunto
+                if x["id"] not in ids_plano and x.get("status") == "ACTIVE"]
+    if intrusos:
+        meta.falhar(f"há anúncios ativos no conjunto que não estão no plano: {intrusos}. Ligar o conjunto pô-los-ia "
+                    "a gastar. Pausa-os no Gestor de Anúncios (ou acrescenta-os ao plano) e ativa de novo.")
     fora = [n for n in est["anuncios"] if n not in {a["nome"] for a in plano["anuncios"]}]
     conj = meta.get(est["conjunto_id"], {"fields": "start_time,end_time"}, cfg)
     if _instante(conj["start_time"]) <= dt.datetime.now(dt.timezone.utc):
